@@ -1,0 +1,94 @@
+# This is not a shell script you should run
+# These fragments might be useful for processing onion-graph.py output
+
+# onion-graph: A Tor network relay connectivity scanner
+# Copyright Tim Wilson-Brown (teor) 2016 - gmail: teor2345
+#
+# This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+~/tor/tor-master/src/or/tor DataDirectory /tmp/tor.$$ SOCKSPort 0 ControlPort 10000
+cd ~/tor/onion-graph/ && python onion_graph.py 10000 | tee graph.$$.`date -u "+%Y%m%d"`.log
+
+cd ~/tor/onion-graph/ && while true; do cat *.log | grep " ok " | wc -l; sleep 120; done
+
+cat trial_logs/*.log > graph.20160122.log
+cat graph.20160122.log | sed 's/\([0-9]*\)[0-9][0-9][0-9][0-9]\.[0-9]*\(.*\)/\10000\2/' > graph.20160122.blur_epoch.log
+cat graph.20160122.blur_epoch.log | sed 's/\([0-9]*\.[0-9]\)[0-9]* [0-9]*\(.*\)/\1\2/' > graph.20160122.blur_elapsed.log
+cat graph.20160122.blur_elapsed.log | sort > graph.20160122.permute_order.log
+mv graph.20160122.permute_order.log graph.20160122.cleansed.log
+
+cat graph.20160122.cleansed.log | grep "ok" > graph.20160122.ok.log 
+cat graph.20160122.cleansed.log | grep -v "ok" > graph.20160122.bad.log 
+
+# Error cases need further analysis
+
+# all 0 entries
+cat graph.20160122.bad.log | grep " 0 " > graph.20160122.bad0.log
+cat graph.20160122.bad.log | grep -v " 0 "
+# subcategories
+
+# Relay / Consensus churn
+# We don't really care about these - a certain amount of churn is expected
+cat graph.20160122.bad0.log | grep "No descriptor" > graph.20160122.consensus.descriptor.log
+cat graph.20160122.bad0.log | grep "No such router" > graph.20160122.consensus.router.log
+cat graph.20160122.consensus.*.log > graph.20160122.consensus.log
+
+# Bad connections
+cat graph.20160122.bad0.log | grep "TIMEOUT" > graph.20160122.connection.timeout.log
+cat graph.20160122.bad0.log | grep "DESTROYED" > graph.20160122.connection.destroyed.log
+cat graph.20160122.bad0.log | grep "CHANNEL_CLOSED" > graph.20160122.connection.closed.log
+cat graph.20160122.bad0.log | grep "TORPROTOCOL" > graph.20160122.connection.protocol.log
+cat graph.20160122.connection.*.log | grep -v "path_had_no_relay_here" > graph.20160122.connection.log
+
+cat graph.20160122.connection.log | cut -d" " -f2,3,12 > graph.20160122.bad_reason.log
+
+# The bad file is now in "node node reason" form, and can be analysed
+# It might help to have the ok file in "node node OK" form for this analysis
+cat graph.20160122.ok2.log | cut -d" " -f2,3 > graph.20160122.ok_list.log
+cat graph.20160122.ok_list.log | sed 's/\([^ ]\) \([^ ]\).*/\1 \2 OK/' > graph.20160122.ok_reason.log
+
+# And it might help to just have a list of the bad nodes
+cat graph.20160122.bad_reason.log | cut -d" " -f1,2 > graph.20160122.bad_list.log
+
+# Success cases
+
+cat graph.20160122.ok.log | grep " 1 " > graph.20160122.ok1.log
+cat graph.20160122.ok.log | grep " 2 " > graph.20160122.ok2.log
+
+cat graph.20160122.ok2.log | cut -d" " -f2,3,5 > graph.20160122.ok_distances.log
+
+# The ok file is now in "node node distance" form, and can be graphed
+
+# But are they unique?
+# 2.3% duplicates
+cat graph.20160122.bad_list.log | sort -u > graph.20160122.bad_list.unique.log
+# 5.0% duplicates
+cat graph.20160122.ok_list.log | sort -u > graph.20160122.ok_list.unique.log
+
+# 2.3% duplicates (so almost all fail for the same reason)
+cat graph.20160122.bad_reason.log | sort -u > graph.20160122.bad_reason.unique.log
+# 0.5% duplicates (so 4.5% have different times - no noise in this run)
+cat graph.20160122.ok_distances.log | sort -u > graph.20160122.ok_distances.unique.log
+
+# And now in DOT format
+# Use R_ to avoid relay fingerprints being interpreted as numbers
+echo "digraph ok {" > graph.20160122.ok_list.dot
+cat graph.20160122.ok_list.log | sed "s/\([^ ]*\) \([^ ]*\)/R_\1 -> R_\2;/" >> graph.20160122.ok_list.dot
+echo "}" >> graph.20160122.ok_list.dot
+dot graph.20160122.ok_list.dot
+
+echo "digraph bad {" > graph.20160122.bad_list.dot
+cat graph.20160122.bad_list.log | sed "s/\([^ ]*\) \([^ ]*\)/R_\1 -> R_\2;/" >> graph.20160122.bad_list.dot
+echo "}" >> graph.20160122.bad_list.dot
+dot graph.20160122.bad_list.dot
